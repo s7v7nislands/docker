@@ -22,6 +22,7 @@ import (
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/cliconfig"
 	"github.com/docker/docker/daemon/events"
+	"github.com/docker/docker/daemon/exec"
 	"github.com/docker/docker/daemon/execdriver"
 	"github.com/docker/docker/daemon/execdriver/execdrivers"
 	"github.com/docker/docker/daemon/graphdriver"
@@ -32,12 +33,10 @@ import (
 	"github.com/docker/docker/graph"
 	"github.com/docker/docker/image"
 	"github.com/docker/docker/pkg/archive"
-	"github.com/docker/docker/pkg/broadcaster"
 	"github.com/docker/docker/pkg/discovery"
 	"github.com/docker/docker/pkg/fileutils"
 	"github.com/docker/docker/pkg/graphdb"
 	"github.com/docker/docker/pkg/idtools"
-	"github.com/docker/docker/pkg/ioutils"
 	"github.com/docker/docker/pkg/jsonmessage"
 	"github.com/docker/docker/pkg/mount"
 	"github.com/docker/docker/pkg/namesgenerator"
@@ -108,7 +107,7 @@ type Daemon struct {
 	repository       string
 	sysInitPath      string
 	containers       *contStore
-	execCommands     *execStore
+	execCommands     *exec.Store
 	graph            *graph.Graph
 	repositories     *graph.TagStore
 	idIndex          *truncindex.TruncIndex
@@ -205,15 +204,11 @@ func (daemon *Daemon) Register(container *Container) error {
 	}
 
 	// Attach to stdout and stderr
-	container.stderr = new(broadcaster.Unbuffered)
-	container.stdout = new(broadcaster.Unbuffered)
-	// Attach to stdin
 	if container.Config.OpenStdin {
-		container.stdin, container.stdinPipe = io.Pipe()
+		container.NewInputPipes()
 	} else {
-		container.stdinPipe = ioutils.NopWriteCloser(ioutil.Discard) // Silently drop stdin
+		container.NewNopInputPipe()
 	}
-	// done
 	daemon.containers.Add(container.ID, container)
 
 	// don't update the Suffixarray if we're starting up
@@ -796,7 +791,7 @@ func NewDaemon(config *Config, registryService *registry.Service) (daemon *Daemo
 	d.ID = trustKey.PublicKey().KeyID()
 	d.repository = daemonRepo
 	d.containers = &contStore{s: make(map[string]*Container)}
-	d.execCommands = newExecStore()
+	d.execCommands = exec.NewStore()
 	d.graph = g
 	d.repositories = repositories
 	d.idIndex = truncindex.NewTruncIndex([]string{})
