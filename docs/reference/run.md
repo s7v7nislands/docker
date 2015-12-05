@@ -244,12 +244,12 @@ of the containers.
 ## Network settings
 
     --dns=[]         : Set custom dns servers for the container
-    --net="bridge"   : Connects a container to a network
-                        'bridge': creates a new network stack for the container on the docker bridge
-                        'none': no networking for this container
-                        'container:<name|id>': reuses another container network stack
-                        'host': use the host network stack inside the container
-                        'NETWORK': connects the container to user-created network using `docker network create` command
+    --net="bridge"   : Connect a container to a network
+                        'bridge': create a network stack on the default Docker bridge
+                        'none': no networking
+                        'container:<name|id>': reuse another container's network stack
+                        'host': use the Docker host network stack
+                        '<network-name>|<network-id>': connect to a user-defined network
     --add-host=""    : Add a line to /etc/hosts (host:IP)
     --mac-address="" : Sets the container's Ethernet device's MAC address
 
@@ -624,6 +624,10 @@ container:
 | `--cpu-quota=0`            | Limit the CPU CFS (Completely Fair Scheduler) quota                                         |
 | `--blkio-weight=0`         | Block IO weight (relative weight) accepts a weight value between 10 and 1000.               |
 | `--blkio-weight-device=""` | Block IO weight (relative device weight, format: `DEVICE_NAME:WEIGHT`)                                                |
+| `--device-read-bps="" `    | Limit read rate from a device (format: `<device-path>:<number>[<unit>]`.                    |
+|                            | Number is a positive integer. Unit can be one of kb, mb, or gb.                             |
+| `--device-write-bps="" `   | Limit write rate to a device (format: `<device-path>:<number>[<unit>]`.                     |
+|                            | Number is a positive integer. Unit can be one of kb, mb, or gb.                             |
 | `--oom-kill-disable=false` | Whether to disable OOM Killer for the container or not.                                     |
 | `--memory-swappiness=""  ` | Tune a container's memory swappiness behavior. Accepts an integer between 0 and 100.        |
 | `--shm-size=""  `          | Size of `/dev/shm`. The format is `<number><unit>`. `number` must be greater than `0`.      |
@@ -978,6 +982,18 @@ $ docker run -it \
     --blkio-weight-device "/dev/sda:200" \
     ubuntu
 
+The `--device-read-bps` flag can limit read rate from a device.
+For example, the command creates a container and limits theread rate to `1mb` per second from `/dev/sda`:
+
+    $ docker run -ti --device-read-bps /dev/sda:1mb ubuntu
+
+The `--device-write-bps` flag can limit write rate to a device.
+For example, the command creates a container and limits write rate to `1mb` per second to `/dev/sda`:
+
+    $ docker run -ti --device-write-bps /dev/sda:1mb ubuntu
+
+Both flags take limits in the `<device-path>:<limit>[unit]` format. Both read and write rates must be a positive integer. You can specify the rate in `kb` (kilobytes), `mb` (megabytes), or `gb` (gigabytes).
+
 ## Additional groups
     --group-add: Add Linux capabilities
 
@@ -1298,11 +1314,19 @@ above, or already defined by the developer with a Dockerfile `ENV`:
 
 Similarly the operator can set the **hostname** with `-h`.
 
+### TMPFS (mount tmpfs filesystems)
+
+    --tmpfs=[]: Create a tmpfs mount with: container-dir[:<options>], where the options are identical to the Linux `mount -t tmpfs -o` command.
+
+    Underlying content from the "container-dir" is copied into tmpfs.
+
+    $ docker run -d --tmpfs /run:rw,noexec,nosuid,size=65536k my_image
+
 ### VOLUME (shared filesystems)
 
-    -v=[]: Create a bind mount with: [host-dir:]container-dir[:<options>], where
+    -v=[]: Create a bind mount with: [host-src:]container-dest[:<options>], where
     options are comma delimited and selected from [rw|ro] and [z|Z].
-           If 'host-dir' is missing, then docker creates a new volume.
+           If 'host-src' is missing, then docker creates a new volume.
 		   If neither 'rw' or 'ro' is specified then the volume is mounted
 		   in read-write mode.
     --volumes-from="": Mount all volumes from the given container(s)
@@ -1317,8 +1341,8 @@ one or more `VOLUME`'s associated with an image, but only the operator
 can give access from one container to another (or from a container to a
 volume mounted on the host).
 
-The `container-dir` must always be an absolute path such as `/src/docs`.
-The `host-dir` can either be an absolute path or a `name` value. If you
+The `container-dest` must always be an absolute path such as `/src/docs`.
+The `host-src` can either be an absolute path or a `name` value. If you
 supply an absolute path for the `host-dir`, Docker bind-mounts to the path
 you specify. If you supply a `name`, Docker creates a named volume by that `name`.
 
@@ -1326,7 +1350,7 @@ A `name` value must start with start with an alphanumeric character,
 followed by `a-z0-9`, `_` (underscore), `.` (period) or `-` (hyphen).
 An absolute path starts with a `/` (forward slash).
 
-For example, you can specify either `/foo` or `foo` for a `host-dir` value.
+For example, you can specify either `/foo` or `foo` for a `host-src` value.
 If you supply the `/foo` value, Docker creates a bind-mount. If you supply
 the `foo` specification, Docker creates a named volume.
 

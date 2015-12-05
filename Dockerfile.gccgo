@@ -17,12 +17,14 @@ RUN apt-get update && apt-get install -y \
 	curl \
 	git \
 	iptables \
+	jq \
 	net-tools \
 	libapparmor-dev \
 	libcap-dev \
 	libsqlite3-dev \
 	mercurial \
 	parallel \
+	python-dev \
 	python-mock \
 	python-pip \
 	python-websocket \

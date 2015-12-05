@@ -37,7 +37,7 @@ func (s *DockerSuite) TestVolumeCliInspect(c *check.C) {
 	c.Assert(
 		exec.Command(dockerBinary, "volume", "inspect", "doesntexist").Run(),
 		check.Not(check.IsNil),
-		check.Commentf("volume inspect should error on non-existant volume"),
+		check.Commentf("volume inspect should error on non-existent volume"),
 	)
 
 	out, _ := dockerCmd(c, "volume", "create")
@@ -144,7 +144,7 @@ func (s *DockerSuite) TestVolumeCliRm(c *check.C) {
 	c.Assert(
 		exec.Command("volume", "rm", "doesntexist").Run(),
 		check.Not(check.IsNil),
-		check.Commentf("volume rm should fail with non-existant volume"),
+		check.Commentf("volume rm should fail with non-existent volume"),
 	)
 }
 
@@ -164,4 +164,14 @@ func (s *DockerSuite) TestVolumeCliNoArgs(c *check.C) {
 	c.Assert(err, check.NotNil, check.Commentf(stderr))
 	c.Assert(stderr, checker.Contains, usage)
 	c.Assert(stderr, checker.Contains, "flag provided but not defined: --no-such-flag")
+}
+
+func (s *DockerSuite) TestVolumeCliInspectTmplError(c *check.C) {
+	out, _ := dockerCmd(c, "volume", "create")
+	name := strings.TrimSpace(out)
+
+	out, exitCode, err := dockerCmdWithError("volume", "inspect", "--format='{{ .FooBar }}'", name)
+	c.Assert(err, checker.NotNil, check.Commentf("Output: %s", out))
+	c.Assert(exitCode, checker.Equals, 1, check.Commentf("Output: %s", out))
+	c.Assert(out, checker.Contains, "Template parsing error")
 }

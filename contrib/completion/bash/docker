@@ -1133,9 +1133,15 @@ _docker_network_disconnect() {
 }
 
 _docker_network_inspect() {
+	case "$prev" in
+		--format|-f)
+			return
+			;;
+	esac
+
 	case "$cur" in
 		-*)
-			COMPREPLY=( $( compgen -W "--help" -- "$cur" ) )
+			COMPREPLY=( $( compgen -W "--format -f --help" -- "$cur" ) )
 			;;
 		*)
 			__docker_networks
@@ -1366,6 +1372,8 @@ _docker_run() {
 		--cpuset-mems
 		--cpu-shares
 		--device
+		--device-read-bps
+		--device-write-bps
 		--dns
 		--dns-opt
 		--dns-search
@@ -1389,11 +1397,13 @@ _docker_run() {
 		--memory-reservation
 		--name
 		--net
+		--oom-score-adj
 		--pid
 		--publish -p
 		--restart
 		--security-opt
 		--stop-signal
+		--tmpfs
 		--ulimit
 		--user -u
 		--uts
@@ -1443,7 +1453,7 @@ _docker_run() {
 			_filedir
 			return
 			;;
-		--device|--volume|-v)
+		--device|--tmpfs|--volume|-v)
 			case "$cur" in
 				*:*)
 					# TODO somehow do _filedir for stuff inside the image, if it's already specified (which is also somewhat difficult to determine)

@@ -1891,9 +1891,7 @@ func (s *DockerSuite) TestBuildCancellationKillsSleep(c *check.C) {
 
 	startEpoch := daemonTime(c).Unix()
 	// Watch for events since epoch.
-	eventsCmd := exec.Command(
-		dockerBinary, "events",
-		"--since", strconv.FormatInt(startEpoch, 10))
+	eventsCmd := exec.Command(dockerBinary, "events", "--since", strconv.FormatInt(startEpoch, 10))
 	stdout, err := eventsCmd.StdoutPipe()
 	if err != nil {
 		c.Fatal(err)
@@ -1932,12 +1930,12 @@ func (s *DockerSuite) TestBuildCancellationKillsSleep(c *check.C) {
 		c.Fatalf("failed to run build: %s", err)
 	}
 
-	matchCID := regexp.MustCompile("Running in ")
+	matchCID := regexp.MustCompile("Running in (.+)")
 	scanner := bufio.NewScanner(stdoutBuild)
 	for scanner.Scan() {
 		line := scanner.Text()
-		if ok := matchCID.MatchString(line); ok {
-			containerID <- line[len(line)-12:]
+		if matches := matchCID.FindStringSubmatch(line); len(matches) > 0 {
+			containerID <- matches[1]
 			break
 		}
 	}
@@ -4543,7 +4541,7 @@ func (s *DockerSuite) TestBuildInvalidTag(c *check.C) {
 	_, out, err := buildImageWithOut(name, "FROM scratch\nMAINTAINER quux\n", true)
 	// if the error doesnt check for illegal tag name, or the image is built
 	// then this should fail
-	if !strings.Contains(out, "Illegal tag name") || strings.Contains(out, "Sending build context to Docker daemon") {
+	if !strings.Contains(out, "invalid reference format") || strings.Contains(out, "Sending build context to Docker daemon") {
 		c.Fatalf("failed to stop before building. Error: %s, Output: %s", err, out)
 	}
 }
@@ -6377,7 +6375,7 @@ func (s *DockerSuite) TestBuildTagEvent(c *check.C) {
 	select {
 	case ev := <-ch:
 		c.Assert(ev.Status, check.Equals, "tag")
-		c.Assert(ev.ID, check.Equals, "test:")
+		c.Assert(ev.ID, check.Equals, "test:latest")
 	case <-time.After(time.Second):
 		c.Fatal("The 'tag' event not heard from the server")
 	}

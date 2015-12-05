@@ -444,12 +444,12 @@ var (
 		HTTPStatusCode: http.StatusInternalServerError,
 	})
 
-	// ErrorCodeVolumeDup is generated when we try to mount two volumes
+	// ErrorCodeMountDup is generated when we try to mount two mounts points
 	// to the same path.
-	ErrorCodeVolumeDup = errcode.Register(errGroup, errcode.ErrorDescriptor{
-		Value:          "VOLUMEDUP",
-		Message:        "Duplicate bind mount '%s'",
-		Description:    "An attempt was made to mount a volume but the specified destination location is already used in a previous mount",
+	ErrorCodeMountDup = errcode.Register(errGroup, errcode.ErrorDescriptor{
+		Value:          "MOUNTDUP",
+		Message:        "Duplicate mount point '%s'",
+		Description:    "An attempt was made to mount a content but the specified destination location is already used in a previous mount",
 		HTTPStatusCode: http.StatusInternalServerError,
 	})
 
@@ -829,15 +829,6 @@ var (
 		Value:          "RMDRIVERFS",
 		Message:        "Driver %s failed to remove root filesystem %s: %s",
 		Description:    "While trying to delete a container, the driver failed to remove the root filesystem",
-		HTTPStatusCode: http.StatusInternalServerError,
-	})
-
-	// ErrorCodeRmInit is generated when we try to delete a container
-	// but failed deleting its init filesystem.
-	ErrorCodeRmInit = errcode.Register(errGroup, errcode.ErrorDescriptor{
-		Value:          "RMINIT",
-		Message:        "Driver %s failed to remove init filesystem %s: %s",
-		Description:    "While trying to delete a container, the driver failed to remove the init filesystem",
 		HTTPStatusCode: http.StatusInternalServerError,
 	})
 
