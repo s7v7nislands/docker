@@ -50,6 +50,22 @@ func (s *DockerSuite) TestVolumeCliInspect(c *check.C) {
 	c.Assert(strings.TrimSpace(out), check.Equals, "test")
 }
 
+func (s *DockerSuite) TestVolumeCliInspectMulti(c *check.C) {
+	dockerCmd(c, "volume", "create", "--name", "test1")
+	dockerCmd(c, "volume", "create", "--name", "test2")
+	dockerCmd(c, "volume", "create", "--name", "not-shown")
+
+	out, _, err := dockerCmdWithError("volume", "inspect", "--format='{{ .Name }}'", "test1", "test2", "doesntexist", "not-shown")
+	c.Assert(err, checker.NotNil)
+	outArr := strings.Split(strings.TrimSpace(out), "\n")
+	c.Assert(len(outArr), check.Equals, 3, check.Commentf("\n%s", out))
+
+	c.Assert(out, checker.Contains, "test1")
+	c.Assert(out, checker.Contains, "test2")
+	c.Assert(out, checker.Contains, "Error: No such volume: doesntexist")
+	c.Assert(out, checker.Not(checker.Contains), "not-shown")
+}
+
 func (s *DockerSuite) TestVolumeCliLs(c *check.C) {
 	prefix := ""
 	if daemonPlatform == "windows" {
@@ -93,14 +109,14 @@ func (s *DockerSuite) TestVolumeCliLsFilterDangling(c *check.C) {
 
 	out, _ = dockerCmd(c, "volume", "ls", "--filter", "dangling=false")
 
-	// Same as above, but expicitly disabling dangling
+	// Same as above, but explicitly disabling dangling
 	c.Assert(out, checker.Contains, "testnotinuse1\n", check.Commentf("expected volume 'testnotinuse1' in output"))
 	c.Assert(out, checker.Contains, "testisinuse1\n", check.Commentf("expected volume 'testisinuse1' in output"))
 	c.Assert(out, checker.Contains, "testisinuse2\n", check.Commentf("expected volume 'testisinuse2' in output"))
 
 	out, _ = dockerCmd(c, "volume", "ls", "--filter", "dangling=true")
 
-	// Filter "dangling" volumes; ony "dangling" (unused) volumes should be in the output
+	// Filter "dangling" volumes; only "dangling" (unused) volumes should be in the output
 	c.Assert(out, checker.Contains, "testnotinuse1\n", check.Commentf("expected volume 'testnotinuse1' in output"))
 	c.Assert(out, check.Not(checker.Contains), "testisinuse1\n", check.Commentf("volume 'testisinuse1' in output, but not expected"))
 	c.Assert(out, check.Not(checker.Contains), "testisinuse2\n", check.Commentf("volume 'testisinuse2' in output, but not expected"))

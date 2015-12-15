@@ -11,8 +11,8 @@ import (
 	"github.com/Sirupsen/logrus"
 	"github.com/docker/distribution/reference"
 	"github.com/docker/docker/api"
+	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/builder"
-	"github.com/docker/docker/cliconfig"
 	"github.com/docker/docker/container"
 	"github.com/docker/docker/daemon"
 	"github.com/docker/docker/image"
@@ -20,7 +20,6 @@ import (
 	"github.com/docker/docker/pkg/httputils"
 	"github.com/docker/docker/pkg/idtools"
 	"github.com/docker/docker/pkg/ioutils"
-	"github.com/docker/docker/pkg/progressreader"
 	"github.com/docker/docker/pkg/urlutil"
 	"github.com/docker/docker/registry"
 	"github.com/docker/docker/runconfig"
@@ -30,7 +29,7 @@ import (
 type Docker struct {
 	Daemon      *daemon.Daemon
 	OutOld      io.Writer
-	AuthConfigs map[string]cliconfig.AuthConfig
+	AuthConfigs map[string]types.AuthConfig
 	Archiver    *archive.Archiver
 }
 
@@ -58,7 +57,7 @@ func (d Docker) Pull(name string) (*image.Image, error) {
 		}
 	}
 
-	pullRegistryAuth := &cliconfig.AuthConfig{}
+	pullRegistryAuth := &types.AuthConfig{}
 	if len(d.AuthConfigs) > 0 {
 		// The request came with a full auth config file, we prefer to use that
 		repoInfo, err := d.Daemon.RegistryService.ResolveRepository(ref)
@@ -67,7 +66,7 @@ func (d Docker) Pull(name string) (*image.Image, error) {
 		}
 
 		resolvedConfig := registry.ResolveAuthConfig(
-			&cliconfig.ConfigFile{AuthConfigs: d.AuthConfigs},
+			d.AuthConfigs,
 			repoInfo.Index,
 		)
 		pullRegistryAuth = &resolvedConfig
@@ -82,7 +81,7 @@ func (d Docker) Pull(name string) (*image.Image, error) {
 
 // Container looks up a Docker container referenced by `id`.
 func (d Docker) Container(id string) (*container.Container, error) {
-	return d.Daemon.Get(id)
+	return d.Daemon.GetContainer(id)
 }
 
 // Create creates a new Docker container and returns potential warnings
@@ -96,7 +95,7 @@ func (d Docker) Create(cfg *runconfig.Config, hostCfg *runconfig.HostConfig) (*c
 	if err != nil {
 		return nil, nil, err
 	}
-	container, err := d.Daemon.Get(ccr.ID)
+	container, err := d.Container(ccr.ID)
 	if err != nil {
 		return nil, ccr.Warnings, err
 	}
@@ -105,12 +104,12 @@ func (d Docker) Create(cfg *runconfig.Config, hostCfg *runconfig.HostConfig) (*c
 }
 
 // Remove removes a container specified by `id`.
-func (d Docker) Remove(id string, cfg *daemon.ContainerRmConfig) error {
+func (d Docker) Remove(id string, cfg *types.ContainerRmConfig) error {
 	return d.Daemon.ContainerRm(id, cfg)
 }
 
 // Commit creates a new Docker image from an existing Docker container.
-func (d Docker) Commit(name string, cfg *daemon.ContainerCommitConfig) (string, error) {
+func (d Docker) Commit(name string, cfg *types.ContainerCommitConfig) (string, error) {
 	return d.Daemon.Commit(name, cfg)
 }
 
@@ -167,7 +166,7 @@ func (d Docker) Copy(c *container.Container, destPath string, src builder.FileIn
 		}
 		return fixPermissions(srcPath, destPath, rootUID, rootGID, destExists)
 	}
-	if decompress {
+	if decompress && archive.IsArchivePath(srcPath) {
 		// Only try to untar if it is a file and that we've been told to decompress (when ADD-ing a remote file)
 
 		// First try to unpack the source as an archive
@@ -180,11 +179,11 @@ func (d Docker) Copy(c *container.Container, destPath string, src builder.FileIn
 		}
 
 		// try to successfully untar the orig
-		if err := d.Archiver.UntarPath(srcPath, tarDest); err == nil {
-			return nil
-		} else if err != io.EOF {
-			logrus.Debugf("Couldn't untar to %s: %v", tarDest, err)
+		err := d.Archiver.UntarPath(srcPath, tarDest)
+		if err != nil {
+			logrus.Errorf("Couldn't untar to %s: %v", tarDest, err)
 		}
+		return err
 	}
 
 	// only needed for fixPermissions, but might as well put it before CopyFileWithTar
@@ -238,7 +237,7 @@ func (d Docker) Start(c *container.Container) error {
 // DetectContextFromRemoteURL returns a context and in certain cases the name of the dockerfile to be used
 // irrespective of user input.
 // progressReader is only used if remoteURL is actually a URL (not empty, and not a Git endpoint).
-func DetectContextFromRemoteURL(r io.ReadCloser, remoteURL string, progressReader *progressreader.Config) (context builder.ModifiableContext, dockerfileName string, err error) {
+func DetectContextFromRemoteURL(r io.ReadCloser, remoteURL string, createProgressReader func(in io.ReadCloser) io.ReadCloser) (context builder.ModifiableContext, dockerfileName string, err error) {
 	switch {
 	case remoteURL == "":
 		context, err = builder.MakeTarSumContext(r)
@@ -261,8 +260,7 @@ func DetectContextFromRemoteURL(r io.ReadCloser, remoteURL string, progressReade
 			},
 			// fallback handler (tar context)
 			"": func(rc io.ReadCloser) (io.ReadCloser, error) {
-				progressReader.In = rc
-				return progressReader, nil
+				return createProgressReader(rc), nil
 			},
 		})
 	default:

@@ -525,7 +525,7 @@ func (devices *DeviceSet) activateDeviceIfNeeded(info *devInfo, ignoreDeleted bo
 	// Make sure deferred removal on device is canceled, if one was
 	// scheduled.
 	if err := devices.cancelDeferredRemoval(info); err != nil {
-		return fmt.Errorf("Deivce Deferred Removal Cancellation Failed: %s", err)
+		return fmt.Errorf("Device Deferred Removal Cancellation Failed: %s", err)
 	}
 
 	if devinfo, _ := devicemapper.GetInfo(info.Name()); devinfo != nil && devinfo.Exists != 0 {
@@ -766,7 +766,7 @@ func (devices *DeviceSet) createRegisterDevice(hash string) (*devInfo, error) {
 		if err := devicemapper.CreateDevice(devices.getPoolDevName(), deviceID); err != nil {
 			if devicemapper.DeviceIDExists(err) {
 				// Device ID already exists. This should not
-				// happen. Now we have a mechianism to find
+				// happen. Now we have a mechanism to find
 				// a free device ID. So something is not right.
 				// Give a warning and continue.
 				logrus.Errorf("Device ID %d exists in pool but it is supposed to be unused", deviceID)
@@ -818,7 +818,7 @@ func (devices *DeviceSet) createRegisterSnapDevice(hash string, baseInfo *devInf
 		if err := devicemapper.CreateSnapDevice(devices.getPoolDevName(), deviceID, baseInfo.Name(), baseInfo.DeviceID); err != nil {
 			if devicemapper.DeviceIDExists(err) {
 				// Device ID already exists. This should not
-				// happen. Now we have a mechianism to find
+				// happen. Now we have a mechanism to find
 				// a free device ID. So something is not right.
 				// Give a warning and continue.
 				logrus.Errorf("Device ID %d exists in pool but it is supposed to be unused", deviceID)
@@ -1749,7 +1749,7 @@ func (devices *DeviceSet) markForDeferredDeletion(info *devInfo) error {
 
 	info.Deleted = true
 
-	// save device metadata to refelect deleted state.
+	// save device metadata to reflect deleted state.
 	if err := devices.saveMetadata(info); err != nil {
 		info.Deleted = false
 		return err
@@ -1759,7 +1759,7 @@ func (devices *DeviceSet) markForDeferredDeletion(info *devInfo) error {
 	return nil
 }
 
-// Should be caled with devices.Lock() held.
+// Should be called with devices.Lock() held.
 func (devices *DeviceSet) deleteTransaction(info *devInfo, syncDelete bool) error {
 	if err := devices.openTransaction(info.Hash, info.DeviceID); err != nil {
 		logrus.Debugf("Error opening transaction hash = %s deviceId = %d", "", info.DeviceID)
@@ -1805,7 +1805,7 @@ func (devices *DeviceSet) issueDiscard(info *devInfo) error {
 	// This is a workaround for the kernel not discarding block so
 	// on the thin pool when we remove a thinp device, so we do it
 	// manually.
-	// Even if device is deferred deleted, activate it and isue
+	// Even if device is deferred deleted, activate it and issue
 	// discards.
 	if err := devices.activateDeviceIfNeeded(info, true); err != nil {
 		return err
@@ -2115,7 +2115,7 @@ func (devices *DeviceSet) MountDevice(hash, path, mountLabel string) error {
 }
 
 // UnmountDevice unmounts the device and removes it from hash.
-func (devices *DeviceSet) UnmountDevice(hash string) error {
+func (devices *DeviceSet) UnmountDevice(hash, mountPath string) error {
 	logrus.Debugf("[devmapper] UnmountDevice(hash=%s)", hash)
 	defer logrus.Debugf("[devmapper] UnmountDevice(hash=%s) END", hash)
 
@@ -2130,17 +2130,22 @@ func (devices *DeviceSet) UnmountDevice(hash string) error {
 	devices.Lock()
 	defer devices.Unlock()
 
-	if info.mountCount == 0 {
-		return fmt.Errorf("UnmountDevice: device not-mounted id %s", hash)
-	}
+	// If there are running containers when daemon crashes, during daemon
+	// restarting, it will kill running containers and will finally call
+	// Put() without calling Get(). So info.MountCount may become negative.
+	// if info.mountCount goes negative, we do the unmount and assign
+	// it to 0.
 
 	info.mountCount--
 	if info.mountCount > 0 {
 		return nil
+	} else if info.mountCount < 0 {
+		logrus.Warnf("[devmapper] Mount count of device went negative. Put() called without matching Get(). Resetting count to 0")
+		info.mountCount = 0
 	}
 
-	logrus.Debugf("[devmapper] Unmount(%s)", info.mountPath)
-	if err := syscall.Unmount(info.mountPath, syscall.MNT_DETACH); err != nil {
+	logrus.Debugf("[devmapper] Unmount(%s)", mountPath)
+	if err := syscall.Unmount(mountPath, syscall.MNT_DETACH); err != nil {
 		return err
 	}
 	logrus.Debugf("[devmapper] Unmount done")

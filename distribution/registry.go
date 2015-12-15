@@ -2,6 +2,7 @@ package distribution
 
 import (
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"net/url"
@@ -12,16 +13,18 @@ import (
 	"github.com/docker/distribution"
 	"github.com/docker/distribution/digest"
 	"github.com/docker/distribution/manifest/schema1"
+	"github.com/docker/distribution/registry/api/errcode"
 	"github.com/docker/distribution/registry/client"
 	"github.com/docker/distribution/registry/client/auth"
 	"github.com/docker/distribution/registry/client/transport"
-	"github.com/docker/docker/cliconfig"
+	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/distribution/xfer"
 	"github.com/docker/docker/registry"
 	"golang.org/x/net/context"
 )
 
 type dumbCredentialStore struct {
-	auth *cliconfig.AuthConfig
+	auth *types.AuthConfig
 }
 
 func (dcs dumbCredentialStore) Basic(*url.URL) (string, string) {
@@ -31,7 +34,7 @@ func (dcs dumbCredentialStore) Basic(*url.URL) (string, string) {
 // NewV2Repository returns a repository (v2 only). It creates a HTTP transport
 // providing timeout settings and authentication support, and also verifies the
 // remote API version.
-func NewV2Repository(repoInfo *registry.RepositoryInfo, endpoint registry.APIEndpoint, metaHeaders http.Header, authConfig *cliconfig.AuthConfig, actions ...string) (distribution.Repository, error) {
+func NewV2Repository(repoInfo *registry.RepositoryInfo, endpoint registry.APIEndpoint, metaHeaders http.Header, authConfig *types.AuthConfig, actions ...string) (distribution.Repository, error) {
 	ctx := context.Background()
 
 	repoName := repoInfo.CanonicalName
@@ -58,7 +61,7 @@ func NewV2Repository(repoInfo *registry.RepositoryInfo, endpoint registry.APIEnd
 	authTransport := transport.NewTransport(base, modifiers...)
 	pingClient := &http.Client{
 		Transport: authTransport,
-		Timeout:   5 * time.Second,
+		Timeout:   15 * time.Second,
 	}
 	endpointStr := strings.TrimRight(endpoint.URL, "/") + "/v2/"
 	req, err := http.NewRequest("GET", endpointStr, nil)
@@ -91,10 +94,15 @@ func NewV2Repository(repoInfo *registry.RepositoryInfo, endpoint registry.APIEnd
 		return nil, err
 	}
 
-	creds := dumbCredentialStore{auth: authConfig}
-	tokenHandler := auth.NewTokenHandler(authTransport, creds, repoName.Name(), actions...)
-	basicHandler := auth.NewBasicHandler(creds)
-	modifiers = append(modifiers, auth.NewAuthorizer(challengeManager, tokenHandler, basicHandler))
+	if authConfig.RegistryToken != "" {
+		passThruTokenHandler := &existingTokenHandler{token: authConfig.RegistryToken}
+		modifiers = append(modifiers, auth.NewAuthorizer(challengeManager, passThruTokenHandler))
+	} else {
+		creds := dumbCredentialStore{auth: authConfig}
+		tokenHandler := auth.NewTokenHandler(authTransport, creds, repoName.Name(), actions...)
+		basicHandler := auth.NewBasicHandler(creds)
+		modifiers = append(modifiers, auth.NewAuthorizer(challengeManager, tokenHandler, basicHandler))
+	}
 	tr := transport.NewTransport(base, modifiers...)
 
 	return client.NewRepository(ctx, repoName.Name(), endpoint.URL, tr)
@@ -112,4 +120,37 @@ func digestFromManifest(m *schema1.SignedManifest, localName string) (digest.Dig
 		logrus.Infof("Could not compute manifest digest for %s:%s : %v", localName, m.Tag, err)
 	}
 	return manifestDigest, len(payload), nil
+}
+
+type existingTokenHandler struct {
+	token string
+}
+
+func (th *existingTokenHandler) Scheme() string {
+	return "bearer"
+}
+
+func (th *existingTokenHandler) AuthorizeRequest(req *http.Request, params map[string]string) error {
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", th.token))
+	return nil
+}
+
+// retryOnError wraps the error in xfer.DoNotRetry if we should not retry the
+// operation after this error.
+func retryOnError(err error) error {
+	switch v := err.(type) {
+	case errcode.Errors:
+		return retryOnError(v[0])
+	case errcode.Error:
+		switch v.Code {
+		case errcode.ErrorCodeUnauthorized, errcode.ErrorCodeUnsupported, errcode.ErrorCodeDenied:
+			return xfer.DoNotRetry{Err: err}
+		}
+
+	}
+	// let's be nice and fallback if the error is a completely
+	// unexpected one.
+	// If new errors have to be handled in some way, please
+	// add them to the switch above.
+	return err
 }

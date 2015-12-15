@@ -22,7 +22,6 @@ import (
 	"github.com/docker/distribution/reference"
 	"github.com/docker/docker/api"
 	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/cliconfig"
 	"github.com/docker/docker/container"
 	"github.com/docker/docker/daemon/events"
 	"github.com/docker/docker/daemon/exec"
@@ -34,6 +33,7 @@ import (
 	"github.com/docker/docker/daemon/network"
 	"github.com/docker/docker/distribution"
 	dmetadata "github.com/docker/docker/distribution/metadata"
+	"github.com/docker/docker/distribution/xfer"
 	derr "github.com/docker/docker/errors"
 	"github.com/docker/docker/image"
 	"github.com/docker/docker/image/tarexport"
@@ -49,7 +49,9 @@ import (
 	"github.com/docker/docker/pkg/namesgenerator"
 	"github.com/docker/docker/pkg/nat"
 	"github.com/docker/docker/pkg/parsers/filters"
+	"github.com/docker/docker/pkg/progress"
 	"github.com/docker/docker/pkg/signal"
+	"github.com/docker/docker/pkg/streamformatter"
 	"github.com/docker/docker/pkg/stringid"
 	"github.com/docker/docker/pkg/stringutils"
 	"github.com/docker/docker/pkg/sysinfo"
@@ -66,6 +68,16 @@ import (
 	lntypes "github.com/docker/libnetwork/types"
 	"github.com/docker/libtrust"
 	"github.com/opencontainers/runc/libcontainer"
+	"golang.org/x/net/context"
+)
+
+const (
+	// maxDownloadConcurrency is the maximum number of downloads that
+	// may take place at a time for each pull.
+	maxDownloadConcurrency = 3
+	// maxUploadConcurrency is the maximum number of uploads that
+	// may take place at a time for each push.
+	maxUploadConcurrency = 5
 )
 
 var (
@@ -126,7 +138,8 @@ type Daemon struct {
 	containers                *contStore
 	execCommands              *exec.Store
 	tagStore                  tag.Store
-	distributionPool          *distribution.Pool
+	downloadManager           *xfer.LayerDownloadManager
+	uploadManager             *xfer.LayerUploadManager
 	distributionMetadataStore dmetadata.Store
 	trustKey                  libtrust.PrivateKey
 	idIndex                   *truncindex.TruncIndex
@@ -149,14 +162,14 @@ type Daemon struct {
 	imageStore                image.Store
 }
 
-// Get looks for a container using the provided information, which could be
+// GetContainer looks for a container using the provided information, which could be
 // one of the following inputs from the caller:
 //  - A full container ID, which will exact match a container in daemon's list
 //  - A container name, which will only exact match via the GetByName() function
 //  - A partial container ID prefix (e.g. short ID) of any length that is
 //    unique enough to only return a single container object
 //  If none of these searches succeed, an error is returned
-func (daemon *Daemon) Get(prefixOrName string) (*container.Container, error) {
+func (daemon *Daemon) GetContainer(prefixOrName string) (*container.Container, error) {
 	if containerByID := daemon.containers.Get(prefixOrName); containerByID != nil {
 		// prefix is an exact match to a full container ID
 		return containerByID, nil
@@ -182,13 +195,13 @@ func (daemon *Daemon) Get(prefixOrName string) (*container.Container, error) {
 // Exists returns a true if a container of the specified ID or name exists,
 // false otherwise.
 func (daemon *Daemon) Exists(id string) bool {
-	c, _ := daemon.Get(id)
+	c, _ := daemon.GetContainer(id)
 	return c != nil
 }
 
 // IsPaused returns a bool indicating if the specified container is paused.
 func (daemon *Daemon) IsPaused(id string) bool {
-	c, _ := daemon.Get(id)
+	c, _ := daemon.GetContainer(id)
 	return c.State.IsPaused()
 }
 
@@ -538,7 +551,7 @@ func (daemon *Daemon) getEventFilter(filter filters.Args) *events.Filter {
 	// incoming container filter can be name, id or partial id, convert to
 	// a full container id
 	for _, cn := range filter.Get("container") {
-		c, err := daemon.Get(cn)
+		c, err := daemon.GetContainer(cn)
 		filter.Del("container", cn)
 		if err == nil {
 			filter.Add("container", c.ID)
@@ -585,7 +598,7 @@ func (daemon *Daemon) children(name string) (map[string]*container.Container, er
 	children := make(map[string]*container.Container)
 
 	err = daemon.containerGraphDB.Walk(name, func(p string, e *graphdb.Entity) error {
-		c, err := daemon.Get(e.ID())
+		c, err := daemon.GetContainer(e.ID())
 		if err != nil {
 			return err
 		}
@@ -738,7 +751,8 @@ func NewDaemon(config *Config, registryService *registry.Service) (daemon *Daemo
 		return nil, err
 	}
 
-	distributionPool := distribution.NewPool()
+	d.downloadManager = xfer.NewLayerDownloadManager(d.layerStore, maxDownloadConcurrency)
+	d.uploadManager = xfer.NewLayerUploadManager(maxUploadConcurrency)
 
 	ifs, err := image.NewFSStoreBackend(filepath.Join(imageRoot, "imagedb"))
 	if err != nil {
@@ -834,7 +848,6 @@ func NewDaemon(config *Config, registryService *registry.Service) (daemon *Daemo
 	d.containers = &contStore{s: make(map[string]*container.Container)}
 	d.execCommands = exec.NewStore()
 	d.tagStore = tagStore
-	d.distributionPool = distributionPool
 	d.distributionMetadataStore = distributionMetadataStore
 	d.trustKey = trustKey
 	d.idIndex = truncindex.NewTruncIndex([]string{})
@@ -1038,23 +1051,53 @@ func (daemon *Daemon) TagImage(newTag reference.Named, imageName string) error {
 	return nil
 }
 
+func writeDistributionProgress(cancelFunc func(), outStream io.Writer, progressChan <-chan progress.Progress) {
+	progressOutput := streamformatter.NewJSONStreamFormatter().NewProgressOutput(outStream, false)
+	operationCancelled := false
+
+	for prog := range progressChan {
+		if err := progressOutput.WriteProgress(prog); err != nil && !operationCancelled {
+			logrus.Errorf("error writing progress to client: %v", err)
+			cancelFunc()
+			operationCancelled = true
+			// Don't return, because we need to continue draining
+			// progressChan until it's closed to avoid a deadlock.
+		}
+	}
+}
+
 // PullImage initiates a pull operation. image is the repository name to pull, and
 // tag may be either empty, or indicate a specific tag to pull.
-func (daemon *Daemon) PullImage(ref reference.Named, metaHeaders map[string][]string, authConfig *cliconfig.AuthConfig, outStream io.Writer) error {
+func (daemon *Daemon) PullImage(ref reference.Named, metaHeaders map[string][]string, authConfig *types.AuthConfig, outStream io.Writer) error {
+	// Include a buffer so that slow client connections don't affect
+	// transfer performance.
+	progressChan := make(chan progress.Progress, 100)
+
+	writesDone := make(chan struct{})
+
+	ctx, cancelFunc := context.WithCancel(context.Background())
+
+	go func() {
+		writeDistributionProgress(cancelFunc, outStream, progressChan)
+		close(writesDone)
+	}()
+
 	imagePullConfig := &distribution.ImagePullConfig{
 		MetaHeaders:     metaHeaders,
 		AuthConfig:      authConfig,
-		OutStream:       outStream,
+		ProgressOutput:  progress.ChanOutput(progressChan),
 		RegistryService: daemon.RegistryService,
 		EventsService:   daemon.EventsService,
 		MetadataStore:   daemon.distributionMetadataStore,
-		LayerStore:      daemon.layerStore,
 		ImageStore:      daemon.imageStore,
 		TagStore:        daemon.tagStore,
-		Pool:            daemon.distributionPool,
+		DownloadManager: daemon.downloadManager,
 	}
 
-	return distribution.Pull(ref, imagePullConfig)
+	err := distribution.Pull(ctx, ref, imagePullConfig)
+	close(progressChan)
+	<-writesDone
+	return err
 }
 
 // ExportImage exports a list of images to the given output stream. The
@@ -1068,11 +1111,24 @@ func (daemon *Daemon) ExportImage(names []string, outStream io.Writer) error {
 }
 
 // PushImage initiates a push operation on the repository named localName.
-func (daemon *Daemon) PushImage(ref reference.Named, metaHeaders map[string][]string, authConfig *cliconfig.AuthConfig, outStream io.Writer) error {
+func (daemon *Daemon) PushImage(ref reference.Named, metaHeaders map[string][]string, authConfig *types.AuthConfig, outStream io.Writer) error {
+	// Include a buffer so that slow client connections don't affect
+	// transfer performance.
+	progressChan := make(chan progress.Progress, 100)
+
+	writesDone := make(chan struct{})
+
+	ctx, cancelFunc := context.WithCancel(context.Background())
+
+	go func() {
+		writeDistributionProgress(cancelFunc, outStream, progressChan)
+		close(writesDone)
+	}()
+
 	imagePushConfig := &distribution.ImagePushConfig{
 		MetaHeaders:     metaHeaders,
 		AuthConfig:      authConfig,
-		OutStream:       outStream,
+		ProgressOutput:  progress.ChanOutput(progressChan),
 		RegistryService: daemon.RegistryService,
 		EventsService:   daemon.EventsService,
 		MetadataStore:   daemon.distributionMetadataStore,
@@ -1080,9 +1136,13 @@ func (daemon *Daemon) PushImage(ref reference.Named, metaHeaders map[string][]st
 		ImageStore:      daemon.imageStore,
 		TagStore:        daemon.tagStore,
 		TrustKey:        daemon.trustKey,
+		UploadManager:   daemon.uploadManager,
 	}
 
-	return distribution.Push(ref, imagePushConfig)
+	err := distribution.Push(ctx, ref, imagePushConfig)
+	close(progressChan)
+	<-writesDone
+	return err
 }
 
 // LookupImage looks up an image by name and returns it as an ImageInspect
@@ -1382,12 +1442,7 @@ func setDefaultMtu(config *Config) {
 		return
 	}
 	config.Mtu = defaultNetworkMtu
-	if routeMtu, err := getDefaultRouteMtu(); err == nil {
-		config.Mtu = routeMtu
-	}
 }
-
-var errNoDefaultRoute = errors.New("no default route was found")
 
 // verifyContainerSettings performs validation of the hostconfig and config
 // structures.
@@ -1445,14 +1500,14 @@ func configureVolumes(config *Config, rootUID, rootGID int) (*store.VolumeStore,
 }
 
 // AuthenticateToRegistry checks the validity of credentials in authConfig
-func (daemon *Daemon) AuthenticateToRegistry(authConfig *cliconfig.AuthConfig) (string, error) {
+func (daemon *Daemon) AuthenticateToRegistry(authConfig *types.AuthConfig) (string, error) {
 	return daemon.RegistryService.Auth(authConfig)
 }
 
 // SearchRegistryForImages queries the registry for images matching
 // term. authConfig is used to login.
 func (daemon *Daemon) SearchRegistryForImages(term string,
-	authConfig *cliconfig.AuthConfig,
+	authConfig *types.AuthConfig,
 	headers map[string][]string) (*registry.SearchResults, error) {
 	return daemon.RegistryService.Search(term, authConfig, headers)
 }

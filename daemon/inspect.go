@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/docker/docker/api/types"
+	networktypes "github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/api/types/versions/v1p20"
 	"github.com/docker/docker/container"
 	"github.com/docker/docker/daemon/exec"
@@ -27,7 +28,7 @@ func (daemon *Daemon) ContainerInspect(name string, size bool, version version.V
 }
 
 func (daemon *Daemon) containerInspectCurrent(name string, size bool) (*types.ContainerJSON, error) {
-	container, err := daemon.Get(name)
+	container, err := daemon.GetContainer(name)
 	if err != nil {
 		return nil, err
 	}
@@ -67,7 +68,7 @@ func (daemon *Daemon) containerInspectCurrent(name string, size bool) (*types.Co
 
 // containerInspect120 serializes the master version of a container into a json type.
 func (daemon *Daemon) containerInspect120(name string) (*v1p20.ContainerJSON, error) {
-	container, err := daemon.Get(name)
+	container, err := daemon.GetContainer(name)
 	if err != nil {
 		return nil, err
 	}
@@ -223,7 +224,7 @@ func (daemon *Daemon) getBackwardsCompatibleNetworkSettings(settings *network.Se
 
 // getDefaultNetworkSettings creates the deprecated structure that holds the information
 // about the bridge network for a container.
-func (daemon *Daemon) getDefaultNetworkSettings(networks map[string]*network.EndpointSettings) types.DefaultNetworkSettings {
+func (daemon *Daemon) getDefaultNetworkSettings(networks map[string]*networktypes.EndpointSettings) types.DefaultNetworkSettings {
 	var settings types.DefaultNetworkSettings
 
 	if defaultNetwork, ok := networks["bridge"]; ok {

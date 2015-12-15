@@ -13,8 +13,8 @@ import (
 	"syscall"
 
 	"github.com/Sirupsen/logrus"
+	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/daemon/execdriver"
-	"github.com/docker/docker/daemon/network"
 	derr "github.com/docker/docker/errors"
 	"github.com/docker/docker/pkg/chrootarchive"
 	"github.com/docker/docker/pkg/nat"
@@ -51,6 +51,7 @@ type Container struct {
 	ShmPath         string
 	MqueuePath      string
 	ResolvConfPath  string
+	SeccompProfile  string
 }
 
 // CreateDaemonEnvironment returns the list of all environment variables given the list of

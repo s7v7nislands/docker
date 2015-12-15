@@ -754,7 +754,7 @@ func (s *DockerSuite) TestRunContainerNetwork(c *check.C) {
 
 func (s *DockerSuite) TestRunNetHostNotAllowedWithLinks(c *check.C) {
 	// TODO Windows: This is Linux specific as --link is not supported and
-	// this will be deprecated in favour of container networking model.
+	// this will be deprecated in favor of container networking model.
 	testRequires(c, DaemonIsLinux, NotUserNamespace)
 	dockerCmd(c, "run", "--name", "linked", "busybox", "true")
 
@@ -1331,7 +1331,7 @@ func (s *DockerSuite) TestRunResolvconfUpdate(c *check.C) {
 	}
 
 	if bytes.Equal(containerResolv, resolvConfSystem) {
-		c.Fatalf("Restarting  a container after container updated resolv.conf should not pick up host changes; expected %q, got %q", string(containerResolv), string(resolvConfSystem))
+		c.Fatalf("Container's resolv.conf should not have been updated with host resolv.conf: %q", string(containerResolv))
 	}
 
 	//3. test that a running container's resolv.conf is not modified while running
@@ -3384,17 +3384,17 @@ func (s *DockerSuite) TestRunContainerNetModeWithDnsMacHosts(c *check.C) {
 	}
 
 	out, _, err = dockerCmdWithError("run", "--dns", "1.2.3.4", "--net=container:parent", "busybox")
-	if err == nil || !strings.Contains(out, "Conflicting options: --dns and the network mode") {
+	if err == nil || !strings.Contains(out, runconfig.ErrConflictNetworkAndDNS.Error()) {
 		c.Fatalf("run --net=container with --dns should error out")
 	}
 
 	out, _, err = dockerCmdWithError("run", "--mac-address", "92:d0:c6:0a:29:33", "--net=container:parent", "busybox")
-	if err == nil || !strings.Contains(out, "--mac-address and the network mode") {
+	if err == nil || !strings.Contains(out, runconfig.ErrConflictContainerNetworkAndMac.Error()) {
 		c.Fatalf("run --net=container with --mac-address should error out")
 	}
 
 	out, _, err = dockerCmdWithError("run", "--add-host", "test:192.168.2.109", "--net=container:parent", "busybox")
-	if err == nil || !strings.Contains(out, "--add-host and the network mode") {
+	if err == nil || !strings.Contains(out, runconfig.ErrConflictNetworkHosts.Error()) {
 		c.Fatalf("run --net=container with --add-host should error out")
 	}
 }
@@ -3405,17 +3405,17 @@ func (s *DockerSuite) TestRunContainerNetModeWithExposePort(c *check.C) {
 	dockerCmd(c, "run", "-d", "--name", "parent", "busybox", "top")
 
 	out, _, err := dockerCmdWithError("run", "-p", "5000:5000", "--net=container:parent", "busybox")
-	if err == nil || !strings.Contains(out, "Conflicting options: -p, -P, --publish-all, --publish and the network mode (--net)") {
+	if err == nil || !strings.Contains(out, runconfig.ErrConflictNetworkPublishPorts.Error()) {
 		c.Fatalf("run --net=container with -p should error out")
 	}
 
 	out, _, err = dockerCmdWithError("run", "-P", "--net=container:parent", "busybox")
-	if err == nil || !strings.Contains(out, "Conflicting options: -p, -P, --publish-all, --publish and the network mode (--net)") {
+	if err == nil || !strings.Contains(out, runconfig.ErrConflictNetworkPublishPorts.Error()) {
 		c.Fatalf("run --net=container with -P should error out")
 	}
 
 	out, _, err = dockerCmdWithError("run", "--expose", "5000", "--net=container:parent", "busybox")
-	if err == nil || !strings.Contains(out, "Conflicting options: --expose and the network mode (--net)") {
+	if err == nil || !strings.Contains(out, runconfig.ErrConflictNetworkExposePorts.Error()) {
 		c.Fatalf("run --net=container with --expose should error out")
 	}
 }

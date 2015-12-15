@@ -169,10 +169,19 @@ func (s *DockerSuite) TestRunWithKernelMemory(c *check.C) {
 	out, err := inspectField("test1", "HostConfig.KernelMemory")
 	c.Assert(err, check.IsNil)
 	c.Assert(out, check.Equals, "52428800")
+}
+
+func (s *DockerSuite) TestRunWithInvalidKernelMemory(c *check.C) {
+	testRequires(c, kernelMemorySupport)
+
+	out, _, err := dockerCmdWithError("run", "--kernel-memory", "2M", "busybox", "true")
+	c.Assert(err, check.NotNil)
+	expected := "Minimum kernel memory limit allowed is 4MB"
+	c.Assert(out, checker.Contains, expected)
 
 	out, _, err = dockerCmdWithError("run", "--kernel-memory", "-16m", "--name", "test2", "busybox", "echo", "test")
-	expected := "invalid size"
 	c.Assert(err, check.NotNil)
+	expected = "invalid size"
 	c.Assert(out, checker.Contains, expected)
 }
 
@@ -246,7 +255,7 @@ func (s *DockerSuite) TestRunWithBlkioInvalidWeightDevice(c *check.C) {
 	c.Assert(err, check.NotNil, check.Commentf(out))
 }
 
-func (s *DockerSuite) TestRunWithBlkioInvalidDeivceReadBps(c *check.C) {
+func (s *DockerSuite) TestRunWithBlkioInvalidDeviceReadBps(c *check.C) {
 	testRequires(c, blkioWeight)
 	out, _, err := dockerCmdWithError("run", "--device-read-bps", "/dev/sda:500", "busybox", "true")
 	c.Assert(err, check.NotNil, check.Commentf(out))
@@ -466,5 +475,61 @@ func (s *DockerSuite) TestRunTmpfsMounts(c *check.C) {
 	}
 	if _, _, err := dockerCmdWithError("run", "--tmpfs", "/run", "-v", "/run:/run", "busybox", "touch", "/run/somefile"); err == nil {
 		c.Fatalf("Should have generated an error saying Duplicate mount  points")
+	}
+}
+
+// TestRunSeccompProfileDenyUnshare checks that 'docker run --security-opt seccomp:/tmp/profile.json jess/unshare unshare' exits with operation not permitted.
+func (s *DockerSuite) TestRunSeccompProfileDenyUnshare(c *check.C) {
+	testRequires(c, SameHostDaemon, seccompEnabled)
+	jsonData := `{
+	"defaultAction": "SCMP_ACT_ALLOW",
+	"syscalls": [
+		{
+			"name": "unshare",
+			"action": "SCMP_ACT_ERRNO"
+		}
+	]
+}`
+	tmpFile, err := ioutil.TempFile("", "profile.json")
+	defer tmpFile.Close()
+	if err != nil {
+		c.Fatal(err)
+	}
+
+	if _, err := tmpFile.Write([]byte(jsonData)); err != nil {
+		c.Fatal(err)
+	}
+	runCmd := exec.Command(dockerBinary, "run", "--security-opt", "seccomp:"+tmpFile.Name(), "jess/unshare", "unshare", "-p", "-m", "-f", "-r", "mount", "-t", "proc", "none", "/proc")
+	out, _, _ := runCommandWithOutput(runCmd)
+	if !strings.Contains(out, "Operation not permitted") {
+		c.Fatalf("expected unshare with seccomp profile denied to fail, got %s", out)
+	}
+}
+
+// TestRunSeccompProfileDenyChmod checks that 'docker run --security-opt seccomp:/tmp/profile.json busybox chmod 400 /etc/hostname' exits with operation not permitted.
+func (s *DockerSuite) TestRunSeccompProfileDenyChmod(c *check.C) {
+	testRequires(c, SameHostDaemon, seccompEnabled)
+	jsonData := `{
+	"defaultAction": "SCMP_ACT_ALLOW",
+	"syscalls": [
+		{
+			"name": "chmod",
+			"action": "SCMP_ACT_ERRNO"
+		}
+	]
+}`
+	tmpFile, err := ioutil.TempFile("", "profile.json")
+	defer tmpFile.Close()
+	if err != nil {
+		c.Fatal(err)
+	}
+
+	if _, err := tmpFile.Write([]byte(jsonData)); err != nil {
+		c.Fatal(err)
+	}
+	runCmd := exec.Command(dockerBinary, "run", "--security-opt", "seccomp:"+tmpFile.Name(), "busybox", "chmod", "400", "/etc/hostname")
+	out, _, _ := runCommandWithOutput(runCmd)
+	if !strings.Contains(out, "Operation not permitted") {
+		c.Fatalf("expected chmod with seccomp profile denied to fail, got %s", out)
 	}
 }

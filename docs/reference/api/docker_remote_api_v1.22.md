@@ -249,7 +249,7 @@ Json Parameters:
 -   **BlkioWeightDevice** - Block IO weight (relative device weight) in the form of:        `"BlkioWeightDevice": [{"Path": "device_path", "Weight": weight}]`
 -   **BlkioDeviceReadBps** - Limit read rate from a device in form of:	`"BlkioDeviceReadBps": [{"Path": "device_path", "Rate": rate}]`, for example:
 	`"BlkioDeviceReadBps": [{"Path": "/dev/sda", "Rate": "1024"}]"`
--   **BlkioDeviceWriteBps** - Limit write rate to a device in the form of:	`"BlkioDeviceWriteBps": [{"Path": "deivce_path", "Rate": rate}]`, for example:
+-   **BlkioDeviceWriteBps** - Limit write rate to a device in the form of:	`"BlkioDeviceWriteBps": [{"Path": "device_path", "Rate": rate}]`, for example:
 	`"BlkioDeviceWriteBps": [{"Path": "/dev/sda", "Rate": "1024"}]"`
 -   **MemorySwappiness** - Tune a container's memory swappiness behavior. Accepts an integer between 0 and 100.
 -   **OomKillDisable** - Boolean value, whether to disable OOM Killer for the container or not.
@@ -1530,6 +1530,7 @@ Query Parameters:
 
 -   **fromImage** – Name of the image to pull. The name may include a tag or
         digest. This parameter may only be used when pulling an image.
+        The pull is cancelled if the HTTP connection is closed.
 -   **fromSrc** – Source to import.  The value may be a URL from which the image
         can be retrieved or `-` to read the image from the request body.
         This parameter may only be used when importing an image.
@@ -1540,7 +1541,24 @@ Query Parameters:
 
     Request Headers:
 
--   **X-Registry-Auth** – base64-encoded AuthConfig object
+-   **X-Registry-Auth** – base64-encoded AuthConfig object, containing either login information, or a token
+    - Credential based login:
+
+        ```
+    {
+            "username": "jdoe",
+            "password": "secret",
+            "email": "jdoe@acme.com",
+    }
+        ```
+
+    - Token based login:
+
+        ```
+    {
+            "registrytoken": "9cbaf023786cd7..."
+    }
+        ```
 
 Status Codes:
 
@@ -1738,6 +1756,8 @@ If you wish to push an image on to a private registry, that image must already h
 into a repository which references that registry `hostname` and `port`.  This repository name should
 then be used in the URL. This duplicates the command line's flow.
 
+The push is cancelled if the HTTP connection is closed.
+
 **Example request**:
 
     POST /images/registry.acme.com:5000/test/push HTTP/1.1
@@ -1749,8 +1769,24 @@ Query Parameters:
 
 Request Headers:
 
--   **X-Registry-Auth** – Include a base64-encoded AuthConfig.
-        object.
+-   **X-Registry-Auth** – base64-encoded AuthConfig object, containing either login information, or a token
+    - Credential based login:
+
+        ```
+    {
+            "username": "jdoe",
+            "password": "secret",
+            "email": "jdoe@acme.com",
+    }
+        ```
+
+    - Token based login:
+
+        ```
+    {
+            "registrytoken": "9cbaf023786cd7..."
+    }
+        ```
 
 Status Codes:
 

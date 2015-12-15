@@ -14,7 +14,7 @@ var (
 	// name or ID and we can't find it.
 	ErrorCodeNoSuchContainer = errcode.Register(errGroup, errcode.ErrorDescriptor{
 		Value:          "NOSUCHCONTAINER",
-		Message:        "no such id: %s",
+		Message:        "No such container: %s",
 		Description:    "The specified container can not be found",
 		HTTPStatusCode: http.StatusNotFound,
 	})
@@ -81,7 +81,7 @@ var (
 		HTTPStatusCode: http.StatusInternalServerError,
 	})
 
-	// ErrorCodeEmptyID is generated when an ID is the emptry string.
+	// ErrorCodeEmptyID is generated when an ID is the empty string.
 	ErrorCodeEmptyID = errcode.Register(errGroup, errcode.ErrorDescriptor{
 		Value:          "EMPTYID",
 		Message:        "Invalid empty id",

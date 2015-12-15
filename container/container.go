@@ -518,7 +518,7 @@ func (container *Container) AddMountPointWithVolume(destination string, vol volu
 	}
 }
 
-// IsDestinationMounted checkes whether a path is mounted on the container or not.
+// IsDestinationMounted checks whether a path is mounted on the container or not.
 func (container *Container) IsDestinationMounted(destination string) bool {
 	return container.MountPoints[destination] != nil
 }
@@ -545,6 +545,8 @@ func (container *Container) StopSignal() int {
 // See https://github.com/docker/docker/pull/17779
 // for a more detailed explanation on why we don't want that.
 func (container *Container) InitDNSHostConfig() {
+	container.Lock()
+	defer container.Unlock()
 	if container.HostConfig.DNS == nil {
 		container.HostConfig.DNS = make([]string, 0)
 	}

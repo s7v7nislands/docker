@@ -19,8 +19,8 @@ import (
 
 // createContainer populates and configures the container type with the
 // data provided by the execdriver.Command
-func (d *Driver) createContainer(c *execdriver.Command, hooks execdriver.Hooks) (*configs.Config, error) {
-	container := execdriver.InitContainer(c)
+func (d *Driver) createContainer(c *execdriver.Command, hooks execdriver.Hooks) (container *configs.Config, err error) {
+	container = execdriver.InitContainer(c)
 
 	if err := d.createIpc(container, c); err != nil {
 		return nil, err
@@ -82,6 +82,12 @@ func (d *Driver) createContainer(c *execdriver.Command, hooks execdriver.Hooks) 
 		container.AppArmorProfile = c.AppArmorProfile
 	}
 
+	if c.SeccompProfile != "" {
+		container.Seccomp, err = loadSeccompProfile(c.SeccompProfile)
+		if err != nil {
+			return nil, err
+		}
+	}
 	if err := execdriver.SetupCgroups(container, c); err != nil {
 		return nil, err
 	}
@@ -278,7 +284,7 @@ func (d *Driver) setupMounts(container *configs.Config, c *execdriver.Command) e
 		userMounts[m.Destination] = struct{}{}
 	}
 
-	// Filter out mounts that are overriden by user supplied mounts
+	// Filter out mounts that are overridden by user supplied mounts
 	var defaultMounts []*configs.Mount
 	_, mountDev := userMounts["/dev"]
 	for _, m := range container.Mounts {
